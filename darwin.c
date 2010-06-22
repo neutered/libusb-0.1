@@ -53,6 +53,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <inttypes.h>
 #include <unistd.h>
 
 /* standard includes for darwin/os10 (IOKit) */
@@ -228,7 +229,7 @@ static int usb_setup_iterator (io_iterator_t *deviceIterator)
      It will be consumed by the IOServiceGetMatchingServices call */
   if ((matchingDict = IOServiceMatching(kIOUSBDeviceClassName)) == NULL) {
     darwin_cleanup ();
-    
+
     USB_ERROR_STR(-1, "libusb/darwin.c usb_setup_iterator: Could not create a matching dictionary.\n");
   }
 
@@ -247,26 +248,27 @@ static usb_device_t **usb_get_next_device (io_iterator_t deviceIterator, UInt32 
   io_cf_plugin_ref_t *plugInInterface = NULL;
   usb_device_t **device;
   io_service_t usbDevice;
-  long result, score;
+  long result;
+  SInt32 score;
 
   if (!IOIteratorIsValid (deviceIterator) || !(usbDevice = IOIteratorNext(deviceIterator)))
     return NULL;
-  
-  result = IOCreatePlugInInterfaceForService(usbDevice, kIOUSBDeviceUserClientTypeID,
-					     kIOCFPlugInInterfaceID, &plugInInterface,
-					     &score);
-  
+
+  IOCreatePlugInInterfaceForService(usbDevice, kIOUSBDeviceUserClientTypeID,
+	  kIOCFPlugInInterfaceID, &plugInInterface,
+	  &score);
+
   result = IOObjectRelease(usbDevice);
   if (result || !plugInInterface)
     return NULL;
-  
+
   (*plugInInterface)->QueryInterface(plugInInterface, CFUUIDGetUUIDBytes(DeviceInterfaceID),
 				     (LPVOID)&device);
-  
+
   (*plugInInterface)->Stop(plugInInterface);
   IODestroyPlugInInterface (plugInInterface);
   plugInInterface = NULL;
-  
+
   (*(device))->GetLocationID(device, locationp);
 
   return device;
@@ -334,11 +336,11 @@ int usb_os_open(usb_dev_handle *dev)
       USB_ERROR_STR(-darwin_to_errno (result), "usb_os_open(USBDeviceOpenSeize): %s",
 		    darwin_error_str(result));
     }
-    
+
     device->open = 0;
   } else
     device->open = 1;
-    
+
   dev->impl_info = device;
   dev->interface = -1;
   dev->altsetting = -1;
@@ -433,7 +435,7 @@ static int get_endpoints (struct darwin_dev_handle *device)
 
   if (usb_debug > 1)
     fprintf(stderr, "libusb/darwin.c get_endpoints: complete.\n");
-  
+
   return 0;
 }
 
@@ -447,7 +449,7 @@ static int claim_interface (usb_dev_handle *dev, int interface)
   IOUSBFindInterfaceRequest request;
 
   struct darwin_dev_handle *device;
-  long score;
+  SInt32 score;
   int current_interface;
 
   device = dev->impl_info;
@@ -488,7 +490,7 @@ static int claim_interface (usb_dev_handle *dev, int interface)
     if (result != kIOReturnSuccess)
       USB_ERROR_STR(-darwin_to_errno(result), "claim_interface(GetNumberOfConfigurations): %s",
 		    darwin_error_str(result));
-    
+
     if (nConfig < 1)
       USB_ERROR_STR(-ENXIO ,"claim_interface(GetNumberOfConfigurations): no configurations");
     else if ( nConfig > 1 && usb_debug > 0 )
@@ -526,7 +528,7 @@ static int claim_interface (usb_dev_handle *dev, int interface)
 
       dev->config = configDesc->bConfigurationValue;
     }
-    
+
     request.bInterfaceClass = kIOUSBFindInterfaceDontCare;
     request.bInterfaceSubClass = kIOUSBFindInterfaceDontCare;
     request.bInterfaceProtocol = kIOUSBFindInterfaceDontCare;
@@ -554,10 +556,12 @@ static int claim_interface (usb_dev_handle *dev, int interface)
       USB_ERROR_STR (-ENOENT, "claim_interface: interface iterator returned NULL");
   }
 
-  result = IOCreatePlugInInterfaceForService(usbInterface,
-					     kIOUSBInterfaceUserClientTypeID,
-					     kIOCFPlugInInterfaceID,
-					     &plugInInterface, &score);
+  IOCreatePlugInInterfaceForService(usbInterface,
+	  kIOUSBInterfaceUserClientTypeID,
+	  kIOCFPlugInInterfaceID,
+	  &plugInInterface,
+	  &score);
+
   /* No longer need the usbInterface object after getting the plug-in */
   result = IOObjectRelease(usbInterface);
   if (result || !plugInInterface)
@@ -590,7 +594,6 @@ static int claim_interface (usb_dev_handle *dev, int interface)
 		  darwin_error_str(result));
 
   result = get_endpoints (device);
-
   if (result) {
     /* this should not happen */
     usb_release_interface (dev, interface);
@@ -623,7 +626,6 @@ int usb_set_configuration (usb_dev_handle *dev, int configuration)
     usb_release_interface(dev, dev->interface);
 
   result = (*(device->device))->SetConfiguration(device->device, configuration);
-
   if (result)
     USB_ERROR_STR(-darwin_to_errno(result), "usb_set_configuration(SetConfiguration): %s",
 		  darwin_error_str(result));
@@ -682,13 +684,11 @@ int usb_release_interface(usb_dev_handle *dev, int interface)
     return 0;
 
   result = (*(device->interface))->USBInterfaceClose(device->interface);
-
   if (result != kIOReturnSuccess)
     USB_ERROR_STR(-darwin_to_errno(result), "usb_release_interface(USBInterfaceClose): %s",
 		  darwin_error_str(result));
 
   result = (*(device->interface))->Release(device->interface);
-
   if (result != kIOReturnSuccess)
     USB_ERROR_STR(-darwin_to_errno(result), "usb_release_interface(Release): %s",
 		  darwin_error_str(result));
@@ -722,7 +722,6 @@ int usb_set_altinterface(usb_dev_handle *dev, int alternate)
     USB_ERROR_STR(-EACCES, "usb_set_altinterface: interface used without being claimed");
 
   result = (*(device->interface))->SetAlternateInterface(device->interface, alternate);
-
   if (result)
     USB_ERROR_STR(result, "usb_set_altinterface: could not set alternate interface");
 
@@ -752,7 +751,7 @@ static int ep_to_pipeRef (struct darwin_dev_handle *device, int ep)
   /* No pipe found with the correct endpoint address */
   if (usb_debug > 1)
     fprintf(stderr, "libusb/darwin.c ep_to_pipeRef: No pipeRef found with endpoint address 0x%02x.\n", ep);
-  
+
   return -1;
 }
 
@@ -767,18 +766,21 @@ static void rw_completed(void *refcon, io_return_t result, void *io_size)
 {
   struct rw_complete_arg *rw_arg = (struct rw_complete_arg *)refcon;
 
+// dpc - FixMe - %p?
   if (usb_debug > 2)
-    fprintf(stderr, "io async operation completed: %s, size=%lu, result=0x%08x\n", darwin_error_str(result),
-	    (UInt32)io_size, result);
+    fprintf(stderr, "io async operation completed: %s, size=%p, result=0x%08x\n",
+		darwin_error_str(result),
+	    io_size, result);
 
-  rw_arg->io_size = (UInt32)io_size;
+  rw_arg->io_size = (UInt32)(uintptr_t)io_size;
   rw_arg->result  = result;
 
   CFRunLoopStop(rw_arg->cf_loop);
 }
 
-static int usb_bulk_transfer (usb_dev_handle *dev, int ep, char *bytes, int size, int timeout,
-			      rw_async_func_t rw_async, rw_async_to_func_t rw_async_to)
+static int
+usb_bulk_transfer (usb_dev_handle *dev, int ep, char *bytes, int size, int timeout,
+	rw_async_func_t rw_async, rw_async_to_func_t rw_async_to)
 {
   struct darwin_dev_handle *device;
 
@@ -828,14 +830,12 @@ static int usb_bulk_transfer (usb_dev_handle *dev, int ep, char *bytes, int size
   if (transferType == kUSBInterrupt && usb_debug > 3)
     fprintf (stderr, "libusb/darwin.c usb_bulk_transfer: USB pipe is an interrupt pipe. Timeouts will not be used.\n");
 
-  if ( transferType != kUSBInterrupt && rw_async_to != NULL)
-
+  if (transferType != kUSBInterrupt && rw_async_to != NULL)
     result = rw_async_to (device->interface, pipeRef, bytes, size, timeout, timeout,
-			  (IOAsyncCallback1)rw_completed, (void *)&rw_arg);
+		(IOAsyncCallback1)rw_completed, (void *)&rw_arg);
   else
-    result = rw_async (device->interface, pipeRef, bytes, size, (IOAsyncCallback1)rw_completed,
-		       (void *)&rw_arg);
-
+    result = rw_async (device->interface, pipeRef, bytes, size,
+		(IOAsyncCallback1)rw_completed, (void *)&rw_arg);
   if (result == kIOReturnSuccess) {
     /* wait for write to complete */
     if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, (timeout+999)/1000, true) == kCFRunLoopRunTimedOut) {
@@ -847,9 +847,9 @@ static int usb_bulk_transfer (usb_dev_handle *dev, int ep, char *bytes, int size
   }
 
   CFRunLoopRemoveSource(CFRunLoopGetCurrent(), cfSource, kCFRunLoopDefaultMode);
-  
+
   /* Check the return code of both the write and completion functions. */
-  if (result != kIOReturnSuccess || (rw_arg.result != kIOReturnSuccess && 
+  if (result != kIOReturnSuccess || (rw_arg.result != kIOReturnSuccess &&
       rw_arg.result != kIOReturnAborted) ) {
     int error_code;
     char *error_str;
@@ -861,7 +861,7 @@ static int usb_bulk_transfer (usb_dev_handle *dev, int ep, char *bytes, int size
       error_code = darwin_to_errno(result);
       error_str  = darwin_error_str (result);
     }
-    
+
     if (transferType != kUSBInterrupt && rw_async_to != NULL)
       USB_ERROR_STR(-error_code, "usb_bulk_transfer (w/ Timeout): %s", error_str);
     else
@@ -876,7 +876,7 @@ int usb_bulk_write(usb_dev_handle *dev, int ep, char *bytes, int size, int timeo
   int result;
   rw_async_to_func_t to_func = NULL;
   struct darwin_dev_handle *device;
-  
+
   if (dev == NULL || dev->impl_info == NULL)
     return -EINVAL;
 
@@ -889,7 +889,7 @@ int usb_bulk_write(usb_dev_handle *dev, int ep, char *bytes, int size, int timeo
   if ((result = usb_bulk_transfer (dev, ep, bytes, size, timeout,
 				   (*(device->interface))->WritePipeAsync, to_func)) < 0)
     USB_ERROR_STR (result, "usb_bulk_write: An error occured during write (see messages above)");
-  
+
   return result;
 }
 
@@ -898,12 +898,12 @@ int usb_bulk_read(usb_dev_handle *dev, int ep, char *bytes, int size, int timeou
   int result;
   rw_async_to_func_t to_func = NULL;
   struct darwin_dev_handle *device;
-  
+
   if (dev == NULL || dev->impl_info == NULL)
     return -EINVAL;
 
   ep |= 0x80;
-  
+
   device = dev->impl_info;
 
 #if !defined (LIBUSB_NO_TIMEOUT_INTERFACE)
@@ -913,7 +913,7 @@ int usb_bulk_read(usb_dev_handle *dev, int ep, char *bytes, int size, int timeou
   if ((result = usb_bulk_transfer (dev, ep, bytes, size, timeout,
 				   (*(device->interface))->ReadPipeAsync, to_func)) < 0)
     USB_ERROR_STR (result, "usb_bulk_read: An error occured during read (see messages above)");
-  
+
   return result;
 }
 
@@ -996,30 +996,31 @@ int usb_os_find_busses(struct usb_bus **busses)
   if ((result = usb_setup_iterator (&deviceIterator)) < 0)
     return result;
 
-  while ((device = usb_get_next_device (deviceIterator, &location)) != NULL) {
+  for(/**/; (device = usb_get_next_device (deviceIterator, &location)) != NULL; (*(device))->Release(device))
+  {
     struct usb_bus *bus;
 
     if (location & 0x00ffffff)
       continue;
 
     bus = calloc(1, sizeof(struct usb_bus));
-    if (bus == NULL)
-      USB_ERROR(-ENOMEM);
-    
+    if (bus == NULL) {
+		(*(device))->Release(device);
+		IOObjectRelease(deviceIterator);
+		USB_ERROR(-ENOMEM);
+	}
+
     sprintf(buf, "%03i", i++);
     bus->location = location;
 
     strncpy(bus->dirname, buf, sizeof(bus->dirname) - 1);
     bus->dirname[sizeof(bus->dirname) - 1] = 0;
-    
+
     LIST_ADD(fbus, bus);
-    
+
     if (usb_debug >= 2)
       fprintf(stderr, "usb_os_find_busses: Found %s\n", bus->dirname);
-
-    (*(device))->Release(device);
   }
-
   IOObjectRelease(deviceIterator);
 
   *busses = fbus;
@@ -1057,48 +1058,58 @@ int usb_os_find_devices(struct usb_bus *bus, struct usb_device **devices)
   req.wIndex = 0;
   req.wLength = sizeof(IOUSBDeviceDescriptor);
 
-
   while ((device = usb_get_next_device (deviceIterator, &location)) != NULL) {
-    unsigned char device_desc[DEVICE_DESC_LENGTH];
+      unsigned char device_desc[DEVICE_DESC_LENGTH];
 
-    result = (*(device))->GetDeviceAddress(device, (USBDeviceAddress *)&address);
-
-    if (usb_debug >= 2)
-      fprintf(stderr, "usb_os_find_devices: Found USB device at location 0x%08lx\n", location);
-
-    /* first byte of location appears to be associated with the device's bus */
-    if (location >> 24 == bus_loc >> 24) {
-      struct usb_device *dev;
-
-      dev = calloc(1, sizeof(struct usb_device));
-      if (dev == NULL)
-	USB_ERROR(-ENOMEM);
-
-      dev->bus = bus;
-
-      req.pData = device_desc;
-      result = (*(device))->DeviceRequest(device, &req);
-
-      usb_parse_descriptor(device_desc, "bbwbbbbwwwbbbb", &dev->descriptor);
-
-      sprintf(dev->filename, "%03i-%04x-%04x-%02x-%02x", address,
-	      dev->descriptor.idVendor, dev->descriptor.idProduct,
-	      dev->descriptor.bDeviceClass, dev->descriptor.bDeviceSubClass);
-
-      dev->dev = (USBDeviceAddress *)malloc(4);
-      memcpy(dev->dev, &location, 4);
-
-      LIST_ADD(fdev, dev);
+      result = (*(device))->GetDeviceAddress(device, (USBDeviceAddress *)&address);
+      assert(result == kIOReturnSuccess);
 
       if (usb_debug >= 2)
-	fprintf(stderr, "usb_os_find_devices: Found %s on %s at location 0x%08lx\n",
-		dev->filename, bus->dirname, location);
-    }
+	  fprintf(stderr, "usb_os_find_devices: Found USB device at location 0x%" PRIX32 "\n",
+	      location);
 
-    /* release the device now */
-    (*(device))->Release(device);
+      /* first byte of location appears to be associated with the device's bus */
+      if (location >> 24 == bus_loc >> 24) {
+	  struct usb_device *dev;
+
+	  dev = calloc(1, sizeof(struct usb_device));
+	  if (dev == NULL) {
+	      (*(device))->Release(device);
+	      IOObjectRelease(deviceIterator);
+	      USB_ERROR(-ENOMEM);
+	  }
+
+	  dev->bus = bus;
+
+	  req.pData = device_desc;
+	  result = (*(device))->DeviceRequest(device, &req);
+	  if (result != kIOReturnSuccess) {
+	      if (usb_debug)
+		  fprintf(stderr, "%s:%d: DeviceRequest : %08x:%s\n",
+		      __FUNCTION__, __LINE__,
+		      result, darwin_error_str(result));
+	  } else {
+	      usb_parse_descriptor(device_desc, "bbwbbbbwwwbbbb", &dev->descriptor);
+
+	      sprintf(dev->filename, "%03i-%04x-%04x-%02x-%02x",
+		  address,
+		  dev->descriptor.idVendor, dev->descriptor.idProduct,
+		  dev->descriptor.bDeviceClass, dev->descriptor.bDeviceSubClass);
+
+	      dev->dev = (USBDeviceAddress *)malloc(4);
+	      memcpy(dev->dev, &location, 4);
+
+	      LIST_ADD(fdev, dev);
+
+	      if (usb_debug >= 2)
+		  fprintf(stderr, "usb_os_find_devices: Found %s on %s at location 0x%" PRIX32 "\n",
+		      dev->filename, bus->dirname, location);
+	  }
+      }
+
+      /* release the device now */
+      (*(device))->Release(device);
   }
-
   IOObjectRelease(deviceIterator);
 
   *devices = fdev;
@@ -1116,7 +1127,7 @@ void usb_os_init(void)
 {
   if (masterPort == MACH_PORT_NULL) {
     IOMasterPort(masterPort, &masterPort);
-    
+
     gNotifyPort = IONotificationPortCreate(masterPort);
   }
 }
@@ -1149,7 +1160,6 @@ int usb_resetep(usb_dev_handle *dev, unsigned int ep)
     USB_ERROR(-EINVAL);
 
   result = (*(device->interface))->ResetPipe(device->interface, pipeRef);
-
   if (result != kIOReturnSuccess)
     USB_ERROR_STR(-darwin_to_errno(result), "usb_resetep(ResetPipe): %s", darwin_error_str(result));
 
@@ -1178,7 +1188,6 @@ int usb_clear_halt(usb_dev_handle *dev, unsigned int ep)
     USB_ERROR(-EINVAL);
 
   result = (*(device->interface))->ClearPipeStall(device->interface, pipeRef);
-
   if (result != kIOReturnSuccess)
     USB_ERROR_STR(-darwin_to_errno(result), "usb_clear_halt(ClearPipeStall): %s", darwin_error_str(result));
 
@@ -1188,7 +1197,7 @@ int usb_clear_halt(usb_dev_handle *dev, unsigned int ep)
 int usb_reset(usb_dev_handle *dev)
 {
   struct darwin_dev_handle *device;
-  
+
   io_return_t result;
 
   if (!dev)
@@ -1201,9 +1210,8 @@ int usb_reset(usb_dev_handle *dev)
     USB_ERROR_STR(-ENOENT, "usb_reset: no such device");
 
   result = (*(device->device))->ResetDevice(device->device);
-
   if (result != kIOReturnSuccess)
     USB_ERROR_STR(-darwin_to_errno(result), "usb_reset(ResetDevice): %s", darwin_error_str(result));
-  
+
   return 0;
 }
